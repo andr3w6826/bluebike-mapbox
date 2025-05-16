@@ -6,5 +6,60 @@ body {
     min-height: 100vh;
     box-sizing: border-box;
     margin: auto;
-    padding: 1em;
+    padding: 50px 0 0;
   }
+
+/* make your header fill the viewport */
+/* header.controls {
+    display: flex;
+    justify-content: space-between; 
+    align-items: center;         
+    width: 100%;             
+    box-sizing: border-box;        
+    padding: 0 16px;               
+  } */
+  header.controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;  /* align children to the top instead of center */
+    width: 100%;
+    padding: 16px 16px;          /* left/right gutter stays the same */
+    box-sizing: border-box;
+    min-height: 80px;
+   
+  }
+  
+  /* remove any default h1 margins and nudge it if needed */
+  header.controls h1 {
+    margin: 0;                /* kill default top/bottom margin */
+    position: relative;
+    top: -5px;        /* slight nudge down if it still feels too high */
+  }
+  
+  /* stack the time & “any time” under the slider, right-aligned */
+  .time-filter {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    position: relative;
+    top: 5px;
+  }
+  
+  /* keep the live time and “any time” each on their own line */
+  .time-filter time,
+  .time-filter em {
+    display: block;
+    font-size: 0.9em;
+  }
+  
+  /* style the “any time” text */
+  .time-filter em {
+    color: #666;
+    font-style: italic;
+  }
+  
+  /* size your slider as you like */
+  #time-slider {
+    width: 400px;
+  }
+  
