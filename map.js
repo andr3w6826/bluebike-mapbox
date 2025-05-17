@@ -1,140 +1,185 @@
 import mapboxgl from 'https://cdn.jsdelivr.net/npm/mapbox-gl@2.15.0/+esm';
-import * as d3 from 'https://cdn.jsdelivr.net/npm/d3@7.9.0/+esm';
+import * as d3     from 'https://cdn.jsdelivr.net/npm/d3@7.9.0/+esm';
 
-console.log('Mapbox GL JS Loaded:', mapboxgl);// Set your Mapbox access token here
+// 1A) Format minutes‐since‐midnight into “H:MM AM/PM”
+function formatTime(minutes) {
+  const d = new Date(0, 0, 0, 0, minutes);
+  return d.toLocaleString('en-US', { timeStyle: 'short' });
+}
 
+// 1B) Compute minutes since midnight from a Date()
+function minutesSinceMidnight(date) {
+  return date.getHours() * 60 + date.getMinutes();
+}
+
+// 1C) Given raw stations + trips, roll up departures, arrivals, totalTraffic
+function computeStationTraffic(stations, trips) {
+  const departures = d3.rollup(trips, v => v.length, d => d.start_station_id);
+  const arrivals   = d3.rollup(trips, v => v.length, d => d.end_station_id);
+
+  return stations.map(st => {
+    const id = st.short_name;
+    st.departures   = departures.get(id) ?? 0;
+    st.arrivals     = arrivals.get(id)   ?? 0;
+    st.totalTraffic = st.departures + st.arrivals;
+    return st;
+  });
+}
+
+// 1D) Filter trips to ±60 min around the slider
+function filterTripsByTime(trips, timeFilter) {
+  if (timeFilter === -1) return trips;
+  return trips.filter(trip => {
+    const startM = minutesSinceMidnight(trip.started_at);
+    const endM   = minutesSinceMidnight(trip.ended_at);
+    return Math.abs(startM - timeFilter) <= 60
+        || Math.abs(endM   - timeFilter) <= 60;
+  });
+}
+
+// ————————————————————————————————————————————————————————————
+// Initialize Mapbox
 mapboxgl.accessToken = 'pk.eyJ1IjoiY2hlbmFuZHJldzA2MiIsImEiOiJjbWFwdm44ZXIwMnl5Mm1vZXVmcGZyNnUxIn0.HCD9hPJDrvrc6WQtzYU8OA';
-
-// Initialize the map
 const map = new mapboxgl.Map({
-  container: 'map', // ID of the div where the map will render
-  style: 'mapbox://styles/mapbox/streets-v12', // Map style
-  center: [-71.09415, 42.36027], // [longitude, latitude]
-  zoom: 12, // Initial zoom level
-  minZoom: 5, // Minimum allowed zoom
-  maxZoom: 18, // Maximum allowed zoom
+  container: 'map',
+  style:     'mapbox://styles/mapbox/streets-v12',
+  center:    [-71.09415, 42.36027],
+  zoom:      12,
+  minZoom:   5,
+  maxZoom:   18
 });
+
+// Helper to project lon/lat to pixel coords
+function getCoords(st) {
+  const pt = new mapboxgl.LngLat(+st.lon, +st.lat);
+  const { x, y } = map.project(pt);
+  return { cx: x, cy: y };
+}
 
 map.on('load', async () => {
-    // step 2 
-    map.addSource('boston_route', {
-        type: 'geojson',
-        data: 'boston_routes.geojson',
+  // 2) Add your static lane layers
+  map.addSource('boston_route', {
+    type: 'geojson',
+    data: 'boston_routes.geojson'
+  });
+  map.addLayer({
+    id:    'boston-lanes',
+    type:  'line',
+    source:'boston_route',
+    paint: {
+      'line-color':   '#32D400',
+      'line-width':   3,
+      'line-opacity': 0.6
+    }
+  });
+
+  map.addSource('cambridge_route', {
+    type: 'geojson',
+    data: 'cambridge_routes.geojson'
+  });
+  map.addLayer({
+    id:    'cambridge-lanes',
+    type:  'line',
+    source:'cambridge_route',
+    paint: {
+      'line-color':   '#32D400',
+      'line-width':   3,
+      'line-opacity': 0.6
+    }
+  });
+
+  try {
+    // 3A) Load stations JSON & trips CSV in parallel
+    const [ jsonData, trips ] = await Promise.all([
+      d3.json('https://dsc106.com/labs/lab07/data/bluebikes-stations.json'),
+      d3.csv(
+        'https://dsc106.com/labs/lab07/data/bluebikes-traffic-2024-03.csv',
+        d => {
+          d.started_at = new Date(d.started_at);
+          d.ended_at   = new Date(d.ended_at);
+          return d;
+        }
+      )
+    ]);
+
+    // 3B) Compute initial station traffic
+    let stations = computeStationTraffic(jsonData.data.stations, trips);
+
+    // 3C) Prepare D3 overlay & radius scale
+    const radiusScale = d3.scaleSqrt()
+      .domain([0, d3.max(stations, d => d.totalTraffic)])
+      .range([4, 25]);
+
+    const svg = d3.select(map.getCanvasContainer()).append('svg');
+    let stationFlow = d3.scaleQuantize().domain([0, 1]).range([0, 0.5, 1]);
+
+    const circles = svg.selectAll('circle')
+      .data(stations, d => d.short_name)
+      .enter()
+      .append('circle')
+        .attr('r', d => radiusScale(d.totalTraffic))
+        .attr('fill', 'steelblue')
+        .attr('stroke', 'white')
+        .attr('stroke-width', 1)
+        .attr('opacity', 0.6)
+      .each(function(d) {
+        d3.select(this)
+          .append('title')
+          .text(`${d.totalTraffic} trips (${d.departures} departures, ${d.arrivals} arrivals)`)
+          .style('--departure-ratio', (d) => stationFlow(d.departures / d.totalTraffic))
+    ;
       });
 
-    map.addLayer({
-        id: 'bike-lanes',
-        type: 'line',
-        source: 'boston_route',
-        paint: {
-          'line-color': '#32D400',
-          'line-width': 3,
-          'line-opacity': 0.6,
-        },
-    });
+    // 3D) Position updater
+    function updatePositions() {
+      circles
+        .attr('cx', d => getCoords(d).cx)
+        .attr('cy', d => getCoords(d).cy);
+    }
+    updatePositions();
+    ['move','zoom','resize','moveend'].forEach(evt => map.on(evt, updatePositions));
 
-    map.addSource('cambridge_route', {
-        type: 'geojson',
-        data:
-          'cambridge_routes.geojson'
-    });
-    map.addLayer({
-        id: 'cambridge-lanes',
-        type: 'line',
-        source: 'cambridge_route',
-        paint: {
-          'line-color': '#32D400', // feel free to tweak
-          'line-width': 3,
-          'line-opacity': 0.6
-        }
-    });
+    // 3E) Wire up your slider controls
+    const timeSlider   = document.getElementById('time-slider');
+    const timeDisplay  = document.getElementById('time-display');
+    const anyTimeLabel = document.getElementById('any-time');
 
-
-    // step 3 
-    let jsonData;
-
-    try {
-        const jsonurl = 'https://dsc106.com/labs/lab07/data/bluebikes-stations.json';
-
-        // Await JSON fetch
-        const jsonData = await d3.json(jsonurl);
-
-        let stations = jsonData.data.stations;
-
-        // step 4
-        const trips = await d3.csv('https://dsc106.com/labs/lab07/data/bluebikes-traffic-2024-03.csv');
-
-        // step 4.2
-        const departures = d3.rollup(
-            trips,
-            (v) => v.length,
-            (d) => d.start_station_id,
+    function updateScatterPlot(timeFilter) {
+        const filteredTrips    = filterTripsByTime(trips, timeFilter);
+        const filteredStations = computeStationTraffic(
+          jsonData.data.stations,
+          filteredTrips
         );
+        timeFilter === -1 ? radiusScale.range([0, 25]) : radiusScale.range([3, 50]);
+        circles
+          .data(filteredStations, d => d.short_name)
+          .join(
+            enter => enter.append('circle'),
+            update => update,
+            exit   => exit.remove()
+          )
+          .attr('r', d => radiusScale(d.totalTraffic))
+          .style('--departure-ratio', (d) =>
+      stationFlow(d.departures / d.totalTraffic),
+    );
+    }      
 
-        const arrivals = d3.rollup(
-            trips,
-            (v) => v.length,
-            (d) => d.end_station_id,
-          );
-        stations = stations.map((station) => {
-            let id = station.short_name;
-            station.arrivals = arrivals.get(id) ?? 0;
-            station.departures  = departures.get(id)  ?? 0;
-            station.totalTraffic = station.arrivals + station.departures;
-            return station;
-        });
-        console.log('Stations with Traffic Data:', stations)
-
-        const radiusScale = d3.scaleSqrt()
-        .domain([0, d3.max(stations, d => d.totalTraffic)])
-        .range([4, 25]);   // tweak min/max radii to taste
-          
-        
-        // step 3.3
-        const svg = d3.select('#map').select('svg');
-
-        const circles = svg
-        .selectAll('circle')
-        .data(stations)
-        .enter()
-        .append('circle')
-        .attr('r', d => radiusScale(d.totalTraffic)) // Radius of the circle
-        .attr('fill', 'steelblue') // Circle fill color
-        .attr('stroke', 'white') // Circle border color
-        .attr('stroke-width', 1) // Circle border thickness
-        .attr('opacity', 0.8)
-        .each(function (d) {
-            // Add <title> for browser tooltips
-            d3.select(this)
-              .append('title')
-              .text(
-                `${d.totalTraffic} trips (${d.departures} departures, ${d.arrivals} arrivals)`,
-              );
-          }); // Circle opacity
-
-        
-        function updatePositions() {
-            circles
-              .attr('cx', (d) => getCoords(d).cx) // Set the x-position using projected coordinates
-              .attr('cy', (d) => getCoords(d).cy); // Set the y-position using projected coordinates
-          }
-          
-        // Initial position update when map loads
-        updatePositions();
-        map.on('move', updatePositions); // Update during map movement
-        map.on('zoom', updatePositions); // Update during zooming
-        map.on('resize', updatePositions); // Update on window resize
-        map.on('moveend', updatePositions); // Final adjustment after movement ends
-        
-
-    } catch (error) {
-        console.error('Error loading JSON:', error); // Handle errors
+    function updateTimeDisplay() {
+      const tf = +timeSlider.value;
+      if (tf === -1) {
+        timeDisplay.textContent    = '';
+        anyTimeLabel.style.display = 'block';
+      } else {
+        timeDisplay.textContent    = formatTime(tf);
+        anyTimeLabel.style.display = 'none';
+      }
+      updateScatterPlot(tf);
     }
 
-});
+    timeSlider.addEventListener('input', updateTimeDisplay);
+    updateTimeDisplay();  // trigger initial render
 
-function getCoords(station) {
-    const point = new mapboxgl.LngLat(+station.lon, +station.lat); // Convert lon/lat to Mapbox LngLat
-    const { x, y } = map.project(point); // Project to pixel coordinates
-    return { cx: x, cy: y }; // Return as object for use in SVG attributes
+  } catch (err) {
+    console.error('Error loading or rendering data:', err);
   }
+});

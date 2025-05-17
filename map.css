@@ -26,4 +26,44 @@ body {
 
 #map svg circle {
     pointer-events: auto;
+    --color-departures: steelblue;
+--color-arrivals: darkorange;
+--color: color-mix(
+  in oklch,
+  var(--color-departures) calc(100% * var(--departure-ratio)),
+  var(--color-arrivals)
+);
+fill: var(--color);
 }
+
+:root {
+    --color-departures: #1f77b4;  /* blue */
+    --color-balanced:   #b197d1;  /* purple */
+    --color-arrivals:   #ff7f0e;  /* orange */
+  }
+
+  /* Legend container */
+  .legend {
+    /* make this flex‐item stretch to fill the cross-axis (width) */
+    align-self: stretch;
+    display: flex;
+    width: 100%;
+    margin: 1em 0;
+    box-sizing: border-box;
+  }
+  
+  /* Each box takes equal width, centers its text */
+  .legend-item {
+    flex: 1;
+    padding: 0.5em 0;     /* vertical padding */
+    text-align: center;   /* center text horizontally */
+    color: white;         /* white text */
+    font-weight: bold;
+    font-family: sans-serif;
+  }
+  
+  /* Background colors matching your circle palette */
+  .legend-item.departures { background: #1f77b4; }  /* blue */
+  .legend-item.balanced   { background: #b197d1; }  /* purple */
+  .legend-item.arrivals   { background: #ff7f0e; }  /* orange */
+  
